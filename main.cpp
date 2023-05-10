@@ -1,8 +1,10 @@
+#include <clocale>
+#include <codecvt>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <functional>
 
 /**
  * In big project srand can be done in a lot of places so it had better to have an alternative.
@@ -22,7 +24,7 @@ using HaveRandomAccessIterator = std::is_base_of<
  * Base implementation of class which will be reused in the helpers below.
  * @tparam TChar character can be different.
  */
-template<typename TChar, typename TCharTraits>
+template<typename TChar>
 class RandomStringGeneratorBase
 {
 public:
@@ -37,11 +39,10 @@ public:
    * @param seed provide any your own
    */
   RandomStringGeneratorBase(
-    TChar const *charset,
-    size_t charsetSize,
+    std::basic_string<TChar> charset,
     std::function<void()> seed = []() { srand(time(nullptr)); },
     std::function<size_t(size_t)> rand = [](size_t range) { return std::rand() % range; }) noexcept
-      : _charset{charset}, _charsetSize{charsetSize}, _seed{std::move(seed)}, _rand{std::move(rand)}
+      : _charset{std::move(charset)}, _seed{std::move(seed)}, _rand{std::move(rand)}
   {
 #if !SPEEDUP_GENERATOR_BY_DEDICATED_CALL_OF_SEED_RANDOM
     // A lot of people thought that atomic very fast. In computers with 128 cores implementation which uses atomics
@@ -71,10 +72,9 @@ public:
     TChar const (&charsetArray)[size],
     std::function<void()> seed = []() { srand(time(nullptr)); },
     std::function<size_t(size_t)> rand = [](size_t range) { return std::rand() % range; })
-      : RandomStringGeneratorBase<TChar, TCharTraits>(charsetArray,
-                                                      size,
-                                                      std::move(seed),
-                                                      std::move(rand))
+      : RandomStringGeneratorBase<TChar>(std::basic_string<TChar>(charsetArray, charsetArray + size),
+                                         std::move(seed),
+                                         std::move(rand))
   {
   }
 
@@ -89,10 +89,9 @@ public:
     TChar const *charsetString,
     std::function<void()> seed = []() { srand(time(nullptr)); },
     std::function<size_t(size_t)> rand = [](size_t range) { return std::rand() % range; })
-      : RandomStringGeneratorBase<TChar, TCharTraits>(charsetString,
-                                                      TCharTraits::length(charsetString),
-                                                      std::move(seed),
-                                                      std::move(rand))
+      : RandomStringGeneratorBase<TChar>(std::basic_string<TChar>(charsetString),
+                                          std::move(seed),
+                                          std::move(rand))
   {
   }
 
@@ -109,10 +108,9 @@ public:
     Container charset,
     std::function<void()> seed = []() { srand(time(nullptr)); },
     std::function<size_t(size_t)> rand = [](size_t range) { return std::rand() % range; })
-      : RandomStringGeneratorBase<TChar, TCharTraits>(charset.data(),
-                                                      charset.size(),
-                                                      std::move(seed),
-                                                      std::move(rand))
+      : RandomStringGeneratorBase<TChar>(std::basic_string<TChar>(charset.data(), charset.data() + charset.size()),
+                                         std::move(seed),
+                                         std::move(rand))
   {
   }
 
@@ -140,7 +138,7 @@ public:
   {
     // This loop will be optimized, so should not be used any handwritten pointer tricks...
     for (int i = 0; i < outSize; i++) {
-      out[i] = _charset[_rand(_charsetSize)];
+      out[i] = _charset[_rand(_charset.size())];
     }
   }
 
@@ -153,14 +151,13 @@ public:
   }
 
 private:
-  TChar const *_charset{};// initialized just for rule to avoid mistakes due to uninitialized values
-  size_t _charsetSize{};  // initialized just for rule to avoid mistakes due to uninitialized values
+  std::basic_string<TChar> _charset;
   std::function<void()> _seed;
   std::function<size_t(size_t)> _rand;
 };
 
-using RandomStringGenerator = RandomStringGeneratorBase<char, std::char_traits<char>>;
-using RandomStringGeneratorW = RandomStringGeneratorBase<wchar_t, std::char_traits<wchar_t>>;
+using RandomStringGenerator = RandomStringGeneratorBase<char>;
+using RandomStringGeneratorW = RandomStringGeneratorBase<wchar_t>;
 // ... etc
 
 int main()
@@ -188,7 +185,7 @@ int main()
     const char charset[] = "0123456789abcdefghijklmnopqrstuvwxyz";
     std::string outString(10, ' ');
     // -1 due to last symbol it is null be careful
-    auto myBaseGenerator = RandomStringGenerator(charset, sizeof(charset) - 1);
+    auto myBaseGenerator = RandomStringGenerator(charset);
 
     for (auto i = 0; i < 10; i++) {
       // DUE to c++ 17 standart allow to write to std::string by data(),
@@ -234,6 +231,20 @@ int main()
     for (auto i = 0; i < 10; i++) {
       auto result = myGenerator.get<std::vector<char>>(i + 1);
       auto resultString = std::string(result.cbegin(), result.cend());
+      std::cout << resultString << std::endl;
+    }
+    std::cout << std::endl;
+  }
+
+  setlocale(LC_CTYPE, "");
+  using convert_type = std::codecvt_utf8<wchar_t>;
+  std::wstring_convert<convert_type, wchar_t> converter;
+  {
+    std::cout << "Usage std::wstring as a char set and getting result to std::string." << std::endl;
+    // Remember RandomStringGenerator does not own charset only points on it
+    auto myGenerator = RandomStringGeneratorW(L"0123456789абвгдеёжзийклмнопрстуфхцчшьщъыэюя");
+    for (auto i = 0; i < 10; i++) {
+      auto resultString = converter.to_bytes(myGenerator.get<std::wstring>(i + 1));
       std::cout << resultString << std::endl;
     }
     std::cout << std::endl;
